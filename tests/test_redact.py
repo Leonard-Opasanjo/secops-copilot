@@ -6,10 +6,10 @@ def test_each_pattern():
         "aws AKIAIOSFODNN7EXAMPLE used",
         "token ghp_abcdefghijklmnopqrstuvwxyz0123456789 pushed",
         "slack xoxb-123456789012-abcdefghijkl posted",
-        "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJkZW1vIn0.c2lnbmF0dXJlc2lnbmF0dXJl here",
+        "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJkZW1vIn0.c2lnbmF0dXJlc2lnbmF0dXJl here",  # gitleaks:allow (fake value for the redaction tests)
         "Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
         "db postgres://app:S3cretPass@db.internal/app",
-        'config password="hunter22" api_key=abcd1234efgh',
+        'config password="hunter22" api_key=abcd1234efgh',  # gitleaks:allow (fake value for the redaction tests)
         "-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----",
         "card 4111 1111 1111 1111 charged",
     ])

@@ -26,7 +26,7 @@ GOOD_REPLY = {
 
 
 def test_request_shape_and_redaction(fake_client):
-    logs = LOGS + "Oct 17 02:40:00 bastion-01 app[9]: config loaded api_key=zz9secretvalue token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJkZW1vIn0.c2lnbmF0dXJlc2lnbmF0dXJl\n"
+    logs = LOGS + "Oct 17 02:40:00 bastion-01 app[9]: config loaded api_key=zz9secretvalue token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJkZW1vIn0.c2lnbmF0dXJlc2lnbmF0dXJl\n"  # gitleaks:allow (fake value for the redaction tests)
     case = Case.load("t", logs, ALERTS)
     c = fake_client(GOOD_REPLY)
     analyst = ClaudeAnalyst(client=c, model="claude-opus-5-5", effort="high", fallbacks=True)

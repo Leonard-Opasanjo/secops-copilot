@@ -71,7 +71,7 @@ def test_report_keeps_facts_and_hypotheses_apart_and_redacts(tmp_path):
     assert md.index("## Verified facts") < md.index("## Hypotheses (not verified)") < md.index("## Response actions")
     assert "L5: Oct 17 02:17:21 bastion-01 sshd[2231]: Accepted password for dave" in md
     assert "| approved | J. Mwangi | ticket 42 |" in md and "Reviewed by:" in md
-    secret_case = Case.load("s", "Oct 17 02:40:00 h app[9]: token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJkZW1vIn0.c2lnbmF0dXJlc2lnbmF0dXJl loaded")
+    secret_case = Case.load("s", "Oct 17 02:40:00 h app[9]: token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJkZW1vIn0.c2lnbmF0dXJlc2lnbmF0dXJl loaded")  # gitleaks:allow (fake value for the redaction tests)
     a = analyse_offline(secret_case)
     md = incident_report(secret_case, {**a.to_dict(), "facts": [{"statement": "s", "evidence": ["L1"]}]})
     assert "eyJhbGci" not in md and "[REDACTED" in md
