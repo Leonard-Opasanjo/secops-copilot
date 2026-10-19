@@ -1,0 +1,5 @@
+[
+  {"id": "SIEM-4490", "rule": "Repeated failed logins", "severity": "medium", "source_ip": "203.0.113.45",
+   "user": "root", "host": "bastion-01", "timestamp": "2026-10-19T03:19:09+03:00",
+   "description": "140 failed SSH logins for root from 203.0.113.45 in 7 minutes"}
+]

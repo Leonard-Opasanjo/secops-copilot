@@ -1,0 +1,5 @@
+[
+  {"id": "EDR-8810", "rule": "New local administrator account", "severity": "medium", "host": "web-02",
+   "user": "svc_backup", "timestamp": "2026-10-18T22:41:09+03:00",
+   "description": "Account svc_backup created and added to the sudo group outside the change window"}
+]

@@ -1,0 +1,13 @@
+Oct 17 02:11:04 bastion-01 sshd[2217]: Failed password for dave from 203.0.113.9 port 51022 ssh2
+Oct 17 02:12:40 bastion-01 sshd[2219]: Failed password for dave from 203.0.113.9 port 51040 ssh2
+Oct 17 02:14:12 bastion-01 sshd[2223]: Failed password for dave from 203.0.113.9 port 51077 ssh2
+Oct 17 02:15:55 bastion-01 sshd[2226]: Failed password for dave from 203.0.113.9 port 51102 ssh2
+Oct 17 02:17:21 bastion-01 sshd[2231]: Accepted password for dave from 203.0.113.9 port 51130 ssh2
+Oct 17 02:17:21 bastion-01 sshd[2231]: pam_unix(sshd:session): session opened for user dave(uid=1004) by (uid=0)
+Oct 17 02:19:03 bastion-01 sudo:     dave : TTY=pts/2 ; PWD=/home/dave ; USER=root ; COMMAND=/usr/bin/tar czf /tmp/export.tgz /home /etc
+Oct 17 02:23:48 bastion-01 sudo:     dave : TTY=pts/2 ; PWD=/home/dave ; USER=root ; COMMAND=/usr/sbin/useradd -m support2
+Oct 17 02:24:10 bastion-01 useradd[2290]: new user: name=support2, UID=1010, GID=1010, home=/home/support2, shell=/bin/bash
+Oct 17 02:24:31 bastion-01 usermod[2293]: add 'support2' to group 'sudo'
+Oct 17 02:31:12 bastion-01 sshd[2301]: Disconnected from user dave 203.0.113.9 port 51130
+Oct 17 08:02:17 bastion-01 sshd[2410]: Accepted publickey for alice from 10.0.1.20 port 51210 ssh2: ED25519 SHA256:abc
+Oct 17 08:05:40 bastion-01 sudo:    alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/apt update

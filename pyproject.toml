@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "secops-copilot"
+version = "0.1.0"
+description = "AI security analyst: explains alerts with cited evidence, separates facts from hypotheses, proposes response actions that a human must approve, and never sends secrets to the model."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [{name = "Leonard Opasanjo"}]
+keywords = ["security", "soc", "incident-response", "llm", "claude", "fastapi", "ai-safety"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "anthropic>=0.69",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5", "bandit>=1.7", "pip-audit>=2.7", "httpx>=0.27"]
+
+[project.scripts]
+secops-copilot = "secops_copilot.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Leonard-Opasanjo/secops-copilot"
+Issues = "https://github.com/Leonard-Opasanjo/secops-copilot/issues"
+
+[tool.setuptools.packages.find]
+include = ["secops_copilot*"]
+
+[tool.setuptools.package-data]
+secops_copilot = ["templates/*.html", "samples/*/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]

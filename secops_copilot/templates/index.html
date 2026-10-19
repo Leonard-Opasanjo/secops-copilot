@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>New case</h1>
+<div class="card">
+  <form method="post" action="/cases">
+    <label class="block">Title</label>
+    <input type="text" name="title" placeholder="e.g. SIEM alert 4471: logins on bastion-01" style="width:100%">
+    <label class="block">Alerts (JSON list of objects, optional)</label>
+    <textarea name="alerts" placeholder='[{"rule": "Multiple failed logins followed by success", "severity": "high", "source_ip": "203.0.113.9", "user": "dave", "host": "bastion-01"}]' style="min-height:5rem"></textarea>
+    <label class="block">Log lines (one per line)</label>
+    <textarea name="logs" placeholder="Oct 17 02:11:04 bastion-01 sshd[2217]: Failed password for dave from 203.0.113.9 port 51022 ssh2"></textarea>
+    <div class="inline" style="display:flex;gap:1rem;align-items:center;margin-top:.8rem;flex-wrap:wrap">
+      <label>Analyst
+        <select name="analyst">
+          <option value="offline">Offline rules (no network)</option>
+          <option value="claude" {% if not analysts.claude %}disabled{% endif %}>Claude{% if not analysts.claude %} (no credentials configured){% endif %}</option>
+        </select>
+      </label>
+      <button type="submit">Analyse</button>
+      <span class="muted" style="font-size:.88rem">Credentials in the data are redacted before anything is sent to an AI service. The data is treated as untrusted; instructions inside it are reported, not followed.</span>
+    </div>
+  </form>
+</div>
+
+<h2>Cases</h2>
+<div class="card">
+{% if not cases %}<p class="muted">No cases yet. Run <code>secops-copilot demo</code> to load the three sample cases.</p>
+{% else %}
+<table>
+<tr><th>#</th><th>Title</th><th>Severity</th><th class="hide-sm">Summary</th><th>Pending approvals</th><th class="hide-sm">Analyst</th></tr>
+{% for c in cases %}
+<tr>
+  <td><a href="/cases/{{ c.id }}">{{ c.id }}</a></td>
+  <td><a href="/cases/{{ c.id }}">{{ c.title }}</a>{% if c.status != "done" %} <span class="pill">{{ c.status }}</span>{% endif %}</td>
+  <td>{% if c.severity %}<span class="sev {{ c.severity }}">{{ c.severity }}</span>{% endif %}</td>
+  <td class="hide-sm muted">{{ c.summary|truncate(110) }}</td>
+  <td>{% if c.pending %}<strong>{{ c.pending }}</strong>{% else %}<span class="muted">0</span>{% endif %}</td>
+  <td class="hide-sm muted">{{ c.analyst }}</td>
+</tr>
+{% endfor %}
+</table>
+{% endif %}
+</div>
+{% endblock %}

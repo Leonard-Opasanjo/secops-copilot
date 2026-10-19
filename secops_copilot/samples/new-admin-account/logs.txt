@@ -1,0 +1,6 @@
+Oct 18 22:38:51 web-02 sshd[7731]: Accepted publickey for carol from 198.51.100.77 port 60012 ssh2: ED25519 SHA256:def
+Oct 18 22:40:02 web-02 sudo:    carol : TTY=pts/1 ; PWD=/home/carol ; USER=root ; COMMAND=/usr/sbin/useradd -m svc_backup
+Oct 18 22:40:02 web-02 useradd[7744]: new user: name=svc_backup, UID=1021, GID=1021, home=/home/svc_backup, shell=/bin/bash
+Oct 18 22:41:09 web-02 usermod[7749]: add 'svc_backup' to group 'sudo'
+Oct 18 22:42:30 web-02 crontab[7755]: (svc_backup) REPLACE (svc_backup)
+Oct 18 22:44:11 web-02 sshd[7760]: Disconnected from user carol 198.51.100.77 port 60012

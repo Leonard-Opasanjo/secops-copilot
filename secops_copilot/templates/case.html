@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Case {{ row.id }} · {{ row.title }} · SecOps Copilot{% endblock %}
+{% block head %}{% if row.status in ("queued", "running") %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
+{% block body %}
+{% set a = row.analysis %}
+<p class="muted"><a href="/">Cases</a> › case {{ row.id }}</p>
+<h1>{% if a %}<span class="sev {{ a.severity }}">{{ a.severity }}</span> {% endif %}{{ row.title }}</h1>
+
+{% if row.status in ("queued", "running") %}
+<div class="notice">Analysis {{ row.status }} with the {{ row.analyst }} analyst… this page refreshes every few seconds.</div>
+{% elif row.status == "failed" %}
+<div class="notice warn">Analysis failed: <span class="mono">{{ row.error }}</span></div>
+{% else %}
+{% if a.injection_attempt_detected %}<div class="notice warn"><strong>Tampering detected.</strong> The submitted data contains text addressed to an automated analyst. It was treated as evidence, not as guidance.</div>{% endif %}
+<div class="card">
+  <dl class="kv">
+    <dt>Summary</dt><dd>{{ a.summary }}</dd>
+    {% if a.why_suspicious %}<dt>Why suspicious</dt><dd>{{ a.why_suspicious }}</dd>{% endif %}
+    <dt>Analyst</dt><dd>{{ a.analyst }}{% if a.redactions %} · <span class="muted">{{ a.redactions.values()|sum }} credential-like value(s) redacted before the AI service saw the data</span>{% endif %}</dd>
+    <dt>Actions</dt><dd>{{ counts.proposed }} awaiting decision · {{ counts.approved }} approved · {{ counts.executed }} executed · {{ counts.rejected }} rejected</dd>
+    <dt>Export</dt><dd><a href="/cases/{{ row.id }}/report.md">Incident report (Markdown)</a> · <a href="/api/cases/{{ row.id }}">JSON</a></dd>
+  </dl>
+</div>
+
+<h2>Verified facts <span class="muted" style="font-weight:400;font-size:.9rem">each cites the lines that support it</span></h2>
+<div class="card">
+{% if not a.facts %}<p class="muted">No facts could be established from the supplied data.</p>{% endif %}
+{% for f in a.facts %}
+<div class="fact">
+  <div>{{ f.statement }} <span class="muted mono">{{ f.evidence|join(", ") }}</span></div>
+  <details><summary class="muted" style="cursor:pointer;font-size:.88rem">Show evidence</summary>
+    <div class="evidence mono">{% for ref in f.evidence[:12] %}<div>{{ ref }}: {{ case.text_of(ref) }}</div>{% endfor %}{% if f.evidence|length > 12 %}<div class="muted">… {{ f.evidence|length - 12 }} more</div>{% endif %}</div>
+  </details>
+</div>
+{% endfor %}
+</div>
+
+<h2>Hypotheses <span class="muted" style="font-weight:400;font-size:.9rem">not verified</span></h2>
+<div class="card">
+{% if not a.hypotheses %}<p class="muted">None.</p>{% endif %}
+{% for h in a.hypotheses %}<div class="fact"><span class="pill">{{ h.confidence }} confidence</span> {{ h.statement }}<div class="muted" style="font-size:.9rem">Verify by: {{ h.verify_by }}</div></div>{% endfor %}
+</div>
+
+<h2>Investigation steps</h2>
+<div class="card"><ol style="margin:0;padding-left:1.2rem">{% for s in a.investigation_steps %}<li>{{ s.description }}{% if s.rationale %} <span class="muted">— {{ s.rationale }}</span>{% endif %}</li>{% endfor %}</ol>{% if not a.investigation_steps %}<p class="muted">None proposed.</p>{% endif %}</div>
+
+<h2 id="actions">Response actions <span class="muted" style="font-weight:400;font-size:.9rem">nothing runs without a named approver</span></h2>
+<div class="card">
+{% if not row.actions %}<p class="muted">No actions proposed.</p>{% endif %}
+{% for act in row.actions %}
+<div class="fact" id="action-{{ act.id }}">
+  <div><strong>{{ act.type }}</strong> <span class="mono">{{ act.target }}</span> <span class="status {{ act.status }}">{{ act.status }}</span> <span class="muted">{{ act.description }}</span></div>
+  <div class="muted" style="font-size:.9rem">{{ act.reason }}{% if act.evidence %} <span class="mono">({{ act.evidence|join(", ") }})</span>{% endif %}</div>
+  {% if act.decided_by %}<div class="muted" style="font-size:.9rem">{{ act.status|capitalize }} by {{ act.decided_by }} at {{ act.decided_at|replace("T", " ") }}{% if act.note %}: {{ act.note }}{% endif %}</div>{% endif %}
+  {% if act.result %}<div class="mono" style="font-size:.85rem">{{ act.result }}</div>{% endif %}
+  {% if act.status == "proposed" %}
+  <form class="inline" method="post" action="/actions/{{ act.id }}/decide" style="margin-top:.4rem">
+    <input type="text" name="by" placeholder="your name" required>
+    <input type="text" name="note" placeholder="note (ticket, reason)" style="flex:1;min-width:12rem">
+    <button type="submit" name="decision" value="approved">Approve</button>
+    <button type="submit" name="decision" value="rejected" class="danger">Reject</button>
+  </form>
+  {% elif act.status == "approved" %}
+  <form class="inline" method="post" action="/actions/{{ act.id }}/execute" style="margin-top:.4rem">
+    <input type="text" name="by" placeholder="your name" required>
+    <button type="submit" class="quiet">Execute (dry run connector)</button>
+  </form>
+  {% endif %}
+</div>
+{% endfor %}
+</div>
+
+{% if a.warnings %}<h2>Validation notes</h2><div class="card"><ul style="margin:0;padding-left:1.2rem">{% for w in a.warnings %}<li class="muted">{{ w }}</li>{% endfor %}</ul></div>{% endif %}
+
+<h2>Audit trail</h2>
+<div class="card"><table><tr><th>When</th><th>Who</th><th>Event</th><th>Detail</th></tr>
+{% for e in row.audit %}<tr><td class="muted">{{ e.at|replace("T", " ") }}</td><td>{{ e.actor }}</td><td>{{ e.event }}</td><td class="muted">{{ e.detail }}</td></tr>{% endfor %}</table></div>
+{% endif %}
+{% endblock %}
