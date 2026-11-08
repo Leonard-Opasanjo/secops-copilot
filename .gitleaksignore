@@ -1,0 +1,9 @@
+# Fake credentials in the redaction tests of the first commits (marked gitleaks:allow from fd54457 on).
+86fe244b5a9e502756b6dac082e8ece129fd09f5:tests/test_redact.py:generic-api-key:12
+86fe244b5a9e502756b6dac082e8ece129fd09f5:tests/test_redact.py:jwt:9
+86fe244b5a9e502756b6dac082e8ece129fd09f5:tests/test_store_and_report.py:jwt:74
+86fe244b5a9e502756b6dac082e8ece129fd09f5:tests/test_claude_analyst.py:jwt:29
+fff38805141c5b45a4e74231b22593f4a5d828b5:tests/test_redact.py:generic-api-key:12
+fff38805141c5b45a4e74231b22593f4a5d828b5:tests/test_redact.py:jwt:9
+fff38805141c5b45a4e74231b22593f4a5d828b5:tests/test_store_and_report.py:jwt:74
+fff38805141c5b45a4e74231b22593f4a5d828b5:tests/test_claude_analyst.py:jwt:29
