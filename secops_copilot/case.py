@@ -4,19 +4,40 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 MAX_LINES = 5000
 MAX_LINE = 2000
 _IP = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-_USER = re.compile(r"(?:for (?:invalid user )?|user[= ]|USER=|sudo:\s+|name=)([A-Za-z0-9._-]{1,64})")
+_USER = re.compile(r"(?:for (?:invalid )?(?:user )?|user[= ]|USER=|sudo:\s+|name=)([A-Za-z0-9._-]{1,64})")
 _SYSLOG_HOST = re.compile(r"^(?:[A-Z][a-z]{2}\s+\d{1,2} \d\d:\d\d:\d\d|\S+T\S+)\s+([A-Za-z0-9][A-Za-z0-9.-]{1,80})\s")
 INJECTION = re.compile(
-    r"(?i)(ignore (?:all |any )?(?:previous|prior|above|earlier) (?:instructions|rules|guidance)"
-    r"|disregard (?:the|your|all) (?:previous |prior )?(?:instructions|rules)"
-    r"|you are now |new instructions?:|system prompt|\bai analyst\b|\bcopilot\b|\bassistant\b"
-    r"|mark (?:this|it|the alert|everything) as (?:benign|safe|resolved|a false positive)"
-    r"|(?:auto[- ]?)?approve (?:all |the |this )?(?:actions?|request)|do not (?:report|escalate|flag))")
+    r"(?i)(ignore\s+(?:all\s+|any\s+)?(?:previous|prior|above|earlier)\s+(?:instructions|rules|guidance)"
+    r"|disregard\s+(?:the\s+|your\s+|all\s+)?(?:previous\s+|prior\s+|earlier\s+|above\s+)?(?:instructions|rules|guidance)"
+    r"|you\s+are\s+now\s|new\s+instructions?:|system\s+prompt|\bai\s+analyst\b"
+    r"|\b(?:note|message|instructions?)\s+(?:to|for)\s+(?:the\s+)?(?:ai|llm|model|assistant|copilot)\b"
+    r"|mark\s+(?:this|it|the\s+alert|everything)\s+as\s+(?:benign|safe|resolved|a\s+false\s+positive)"
+    r"|(?:auto[- ]?)?approve\s+(?:(?:all|the|this)\s+)?(?:actions?|request)|do\s+not\s+(?:report|escalate|flag))")
+_INVISIBLE = re.compile(r"[\u00ad\u200b-\u200f\u2060-\u2064\ufeff]")
+
+
+def looks_injected(text: str) -> bool:
+    """The injection detector, after folding look-alike characters and removing invisible ones."""
+    return bool(INJECTION.search(_INVISIBLE.sub("", unicodedata.normalize("NFKC", text))))
+
+
+def _strings(value):
+    """Every key and string value in a decoded JSON value."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            yield str(k)
+            yield from _strings(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _strings(v)
+    elif isinstance(value, str):
+        yield value
 
 
 class CaseError(ValueError):
@@ -84,17 +105,15 @@ class Case:
         return found
 
     def injection_lines(self) -> list[int]:
-        return [i for i, ln in enumerate(self.lines, 1) if INJECTION.search(ln)]
+        return [i for i, ln in enumerate(self.lines, 1) if looks_injected(ln)]
 
-    def injection_in_alerts(self) -> bool:
-        return any(INJECTION.search(json.dumps(a)) for a in self.alerts)
+    def injection_in_alerts(self) -> list[int]:
+        return [i for i, a in enumerate(self.alerts, 1) if any(looks_injected(s) for s in _strings(a))]
 
-    def as_prompt_data(self, lines: list[str] | None = None, alerts: list[dict] | None = None) -> str:
-        lines = self.lines if lines is None else lines
-        alerts = self.alerts if alerts is None else alerts
+    def as_prompt_data(self) -> str:
         parts = [f"Case title: {self.title}", "", "<alerts>"]
-        parts += [f"A{i}: {json.dumps(a, sort_keys=True)}" for i, a in enumerate(alerts, 1)] or ["(none)"]
+        parts += [f"A{i}: {json.dumps(a, sort_keys=True)}" for i, a in enumerate(self.alerts, 1)] or ["(none)"]
         parts += ["</alerts>", "", "<logs>"]
-        parts += [f"L{i}: {ln}" for i, ln in enumerate(lines, 1)] or ["(none)"]
+        parts += [f"L{i}: {ln}" for i, ln in enumerate(self.lines, 1)] or ["(none)"]
         parts += ["</logs>"]
         return "\n".join(parts)

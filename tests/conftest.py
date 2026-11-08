@@ -18,15 +18,18 @@ def sample(name: str):
 class FakeMessages:
     """Stands in for client.messages / client.beta.messages: records the request, returns a canned reply."""
 
-    def __init__(self, reply, stop_reason="end_turn", stop_details=None):
+    def __init__(self, reply, stop_reason="end_turn", stop_details=None, content=None, error=None):
         self.reply, self.stop_reason, self.stop_details = reply, stop_reason, stop_details
+        self.content, self.error = content, error
         self.calls = []
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
+        if self.error:
+            raise self.error
         text = self.reply if isinstance(self.reply, str) else json.dumps(self.reply)
         return SimpleNamespace(stop_reason=self.stop_reason, stop_details=self.stop_details,
-                               content=[SimpleNamespace(type="text", text=text)],
+                               content=self.content or [SimpleNamespace(type="text", text=text)],
                                usage=SimpleNamespace(input_tokens=100, output_tokens=50, cache_read_input_tokens=0,
                                                      cache_creation_input_tokens=0))
 
@@ -50,6 +53,6 @@ def client(tmp_path):
     from secops_copilot.db import Store
 
     web.app.state.store = Store(tmp_path / "t.db")
-    with TestClient(web.app) as c:
+    with TestClient(web.app, base_url="http://127.0.0.1:8000") as c:
         yield c
     del web.app.state.store

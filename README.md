@@ -12,10 +12,12 @@ or reject it, and the whole decision trail is audited.
 
 It is built on four promises that are enforced in code, not just in the prompt:
 
-1. **Every fact cites evidence.** A statement without a valid line reference is demoted to a hypothesis.
+1. **Every fact cites evidence.** A statement without a valid line reference, or one that names an account,
+   address or host its cited lines do not show, is demoted to a hypothesis.
 2. **Facts and hypotheses stay apart.** Two lists, two headings, in the dashboard, the JSON and the report.
-3. **No action without a human.** Actions come from a fixed allow-list, must target something that appears in the
-   data, and run only after approval, through a connector that in this repository only dry-runs.
+3. **No action without a human.** Actions come from a fixed allow-list, must target an address, account or host
+   of the right kind that appears in the evidence cited for them, and run once, only after approval, through a
+   connector that in this repository only dry-runs.
 4. **Nothing secret leaves the machine.** Credentials are redacted before any text is sent to the AI service, the
    data is framed as untrusted and instructions found inside it are reported as tampering, and a rule-based
    offline analyst covers the whole workflow with no network at all.
@@ -110,22 +112,43 @@ SecOps Copilot defends in layers, so that no single one has to be perfect:
 |---|---|---|
 | Framing | Data is wrapped in `<alerts>` and `<logs>` tags, each line numbered, and the system prompt states that nothing inside is an instruction and that such text must be reported | `analyst_claude.py` |
 | Schema | The reply must match a JSON schema with fixed enums for severity, confidence and action types, enforced by the API's structured output | `OUTPUT_SCHEMA` |
-| Validation | Facts need evidence that exists; actions must use an allowed type and a target that appears in the data; severity must be in the enum; anything else is dropped and logged in `warnings` | `models.validate_analysis` |
-| Independent detector | A regex detector flags instruction-like text in the data regardless of what the model said, inserts a fact citing the lines, and raises severity to at least medium | `case.injection_lines` |
+| Validation | Facts need evidence that exists and that shows every account, address and host they name; actions must use an allowed type and a target of the right kind (an address for `block_ip`, a plain name for the account actions) that appears in the evidence they cite; fields of the wrong type are ignored; severity must be in the enum; anything else is dropped and logged in `warnings` | `models.validate_analysis` |
+| Independent detector | A regex detector flags instruction-like text in the log lines, in every string inside the alerts and in the case title, whatever the model said. It folds look-alike characters and ignores spacing tricks first, inserts a fact citing the lines and alerts, and raises severity to at least medium | `case.looks_injected` |
 | No capability | The model cannot call tools, run code, or reach a system; it returns JSON and nothing else | by construction |
-| Approval gate | Executing an action requires the `approved` state set by a named person; the store refuses otherwise | `db.Store.execute` |
+| Approval gate | Executing an action requires the `approved` state set by a named person; the store claims the action in one statement, so it runs once even when two requests race, and refuses otherwise | `db.Store.execute` |
+| Browser guard | The dashboard answers only to the host names it is configured for (400 otherwise, against DNS rebinding) and refuses form posts from other sites (403, against CSRF), so a web page open in the same browser cannot approve or run an action | `web.py` |
 
 The tests include a model that obeys the injection (returns "benign", no facts, no actions): the analysis still
 reports the tampering with the line reference, at medium severity. They also include a model that proposes a
 disallowed action type and a target that is not in the data: both are dropped with a warning.
 
+### Attacks we tested
+
+| Attack | What stops it | Test |
+|---|---|---|
+| A web page the analyst has open posts approve and execute forms to `127.0.0.1:8000` | Cross-site posts get 403 (`Origin`, `Sec-Fetch-Site`) | `test_cross_site_requests_and_foreign_hosts_are_refused` |
+| A DNS-rebinding page reads `/api/cases` | Host allow-list: any other name gets 400 | `test_cross_site_requests_and_foreign_hosts_are_refused` |
+| Two execute requests at once on one approved action; an approve and a reject at once | One conditional update per step; the connector runs once | `test_decide_and_execute_cannot_race` |
+| Injection text in an alert field or in the case title | The detector reads every alert string and the title | `test_injection_in_alerts_or_title_is_reported` |
+| Injection written with double spaces, tabs, no-break or zero-width spaces, or full-width letters | Unicode folding, invisible characters removed, any whitespace between words | `test_injection_detector_resists_spacing_tricks_and_skips_plain_words` |
+| A model that obeys the injection (benign, no facts, no actions) | The detector's own fact and the severity floor | `test_injection_in_data_is_reported_even_if_model_complied` |
+| A model that proposes `block_ip dave`, a target with shell syntax, an address its evidence does not mention, or the same action twice | Target kind, shape and evidence checks; duplicates removed | `test_action_targets_must_fit_their_type_and_their_evidence` |
+| A model that cites an unrelated line as proof of a fact | The fact is demoted when its lines do not show what it names | `test_fact_naming_what_its_evidence_does_not_show_is_demoted` |
+| A reply whose fields have the wrong type | The validator ignores them instead of crashing | `test_validation_survives_wrong_types` |
+| Secrets under JSON keys in an alert, in the case title, or a private key spread over several log lines | Alerts redacted field by field, title redacted, keys tracked across lines | `test_alert_values_and_title_are_redacted`, `test_private_key_split_over_log_lines_is_redacted` |
+| A log line that puts HTML or a new section into the report, or leaks a token through a fact | Report text redacted, kept on one line, `<` escaped, quotes fenced | `test_report_text_from_the_data_is_redacted_and_inert` |
+
 ## Secrets never leave the machine
 
 Logs contain credentials: tokens in URLs, keys in config dumps, passwords in failed scripts. Before any text is
-sent to the AI service, `redact.py` replaces private key blocks, AWS access keys, GitHub and Slack tokens, JWTs,
-bearer tokens, passwords in URLs, `password=` and `token=` style assignments, and card numbers that pass the Luhn
-check. The count of replacements is kept with the analysis and shown in the dashboard and the report. The same
-redaction is applied to evidence quoted in the report, since reports travel.
+sent to the AI service, `redact.py` replaces private keys (also when one spans several log lines), AWS access
+keys, GitHub and Slack tokens, `sk-` style and Google API keys, JWTs, bearer and basic authorization headers,
+cookies, passwords in URLs and on `mysql` and `sshpass` command lines, `password=`, `token=` and `DB_PASSWORD=`
+style assignments (JSON `"password": "..."` included), and card numbers that pass the Luhn check. Alerts are
+redacted field by field, and a value stored under a key such as `password` or `api_key` is removed whole; the case
+title is redacted too. The count of replacements is kept with the analysis and shown in the dashboard and the
+report. The report applies the same redaction to everything it prints, quotes and statements alike, since reports
+travel.
 
 The redaction is deliberately conservative about log syntax: `PWD=/home/dave` in a sudo line is a working
 directory, not a password, and is left alone; the tests pin that. The offline backend sends nothing anywhere, and
@@ -139,6 +162,7 @@ attacker creating a second account:
 
 ```
 $ secops-copilot analyse --logs secops_copilot/samples/brute-force-success/logs.txt --alerts secops_copilot/samples/brute-force-success/alerts.json
+saved as case 1 in secops.db
 [critical] Critical severity: successful login for dave after repeated failures from 203.0.113.9; privileged commands by dave after the suspicious login; new account 'support2' created; 'support2' granted administrative group 'sudo'.
 analyst: offline
 facts:
@@ -202,6 +226,9 @@ docker build -t secops-copilot .
 docker run -d -p 127.0.0.1:8000:8000 -v secops-data:/data -e ANTHROPIC_API_KEY secops-copilot
 ```
 
+The dashboard answers only to the host names in `SECOPS_ALLOWED_HOSTS` (default `127.0.0.1,localhost`). If you
+browse to it under another name, add that name, for example `-e SECOPS_ALLOWED_HOSTS=127.0.0.1,localhost,secops.lan`.
+
 ## Usage
 
 ### Dashboard
@@ -213,8 +240,9 @@ secops-copilot serve [--host 127.0.0.1] [--port 8000] [--db secops.db]
 Paste alerts (a JSON list of objects; any keys, though `rule`, `severity`, `source_ip`, `user` and `host` are
 understood) and log lines, choose the analyst, and submit. The case page shows the severity, summary, facts with
 expandable evidence, hypotheses, investigation steps, the action queue with approve, reject and execute forms,
-validation notes, and the audit trail. `/api/cases/{id}` returns everything as JSON; `/api/docs` is the API
-reference.
+validation notes, and the audit trail. `/api/cases/{id}` returns everything as JSON; `/api/openapi.json` is the API
+schema. Form posts from other sites get 403 and requests for a host name outside `SECOPS_ALLOWED_HOSTS` get
+400, so a web page open in the same browser can neither act on the queue nor read the cases.
 
 ### Command line
 
@@ -227,7 +255,7 @@ secops-copilot serve [--host H] [--port P] [--db PATH]
 
 `analyse` prints the severity, summary, facts, hypotheses and proposed actions, records the case unless
 `--no-save` is given, and writes the report and JSON on request. Exit code 2 means the input could not be read or
-the analyst failed (for example, the Claude backend with no credentials).
+the analyst failed (for example, the Claude backend with no credentials, or the API could not be reached).
 
 ## The Claude backend
 
@@ -239,13 +267,17 @@ the analyst failed (for example, the Claude backend with no credentials).
   once.
 - **Refusal fallback:** the request opts into the server-side fallback (`fallbacks: "default"`) so a safety
   refusal on one model is retried on a fallback model inside the same call. Set `SECOPS_FALLBACKS=0` to disable.
-  If the whole chain refuses, the case fails with the refusal category recorded.
+  If the whole chain refuses, the case fails with the refusal category recorded. After a fallback, the answer is
+  read from the text that follows the fallback marker.
+- **Failures:** an API error, a reply cut off by `max_tokens`, and any other reply that did not finish
+  (`stop_reason` other than `end_turn`) fail the case with the reason recorded, in the dashboard and in the CLI.
 - **Redaction** happens before the request is built; the counts travel with the analysis.
 - **Cost:** a typical case is a few thousand input tokens and under a thousand output tokens; the token usage of
   the last call is available on the analyst object.
 
 The backend is exercised in the tests through a fake client that records the request and returns canned replies,
-including a refusal, invalid JSON, a reply that obeys an injection and a reply that proposes disallowed actions.
+including a refusal, invalid JSON, a reply that obeys an injection, a reply that proposes disallowed actions, an
+unreachable API, an unfinished reply and a reply that follows a fallback block.
 It has not been run against the live API in CI, because CI has no key; see [Limitations](#limitations).
 
 ## The offline backend
@@ -260,10 +292,14 @@ and so that the tool is useful on a machine with no key.
 ## Response actions and approval
 
 The allow-list is six actions: `block_ip`, `disable_account`, `reset_credentials`, `isolate_host`,
-`add_to_watchlist`, `preserve_evidence`. A proposal names one of them, a target that appears in the case data, a
-reason, and the evidence. In the store an action moves `proposed` → `approved` or `rejected` (with the decider's
-name and a note) → `executed`. `Store.execute` raises `ApprovalRequired` for anything not in `approved`; there is
-no code path that executes without that state. The connector shipped is `DryRunConnector`, which returns a
+`add_to_watchlist`, `preserve_evidence`. A proposal names one of them, a target of the right kind (an address for
+`block_ip`, an account name for `disable_account` and `reset_credentials`) that appears in the evidence it cites,
+a reason, and the evidence. In the store an action moves `proposed` → `approved` or `rejected` (with the decider's
+name and a note) → `executing` → `executed`. Each step is one conditional update in SQLite, so two people deciding
+at once cannot overwrite each other and two execute requests cannot both run the action. `Store.execute` needs the
+executor's name and raises `ApprovalRequired` for anything not in `approved`; there is no code path that executes
+without that state. If the connector raises, the action goes back to `approved` and the failure is audited. The
+connector shipped is `DryRunConnector`, which returns a
 sentence describing what it would have done. A real deployment replaces it with a class that has the same
 `execute(kind, target)` method and talks to the firewall, directory or EDR. Every decision and execution is an
 audit row with actor, time and detail.
@@ -274,7 +310,9 @@ audit row with actor, time and detail.
 severity, backend and time; a tampering warning when applicable; the summary and why it is suspicious; verified
 facts, each with its references and the quoted lines (credentials redacted); hypotheses with confidence and how to
 verify them; investigation steps; the response action table with status, decider and note; validation notes;
-the redaction count; and a review signature line. It is written for a reader who was not in the room.
+the redaction count; and a review signature line. It is written for a reader who was not in the room. Text that
+comes from the data or the model is redacted, kept on one line and has `<` escaped, and quoted lines sit in code
+spans that a backtick in the log cannot close, so a log line cannot add HTML or new sections to the report.
 
 ## Architecture
 
@@ -292,7 +330,7 @@ secops_copilot/
 ├── cli.py              analyse / demo / serve
 └── templates/          dashboard pages
 secops_copilot/samples/ three cases: brute-force-success, new-admin-account, prompt-injection
-tests/                  27 tests; no network, no key
+tests/                  42 tests; no network, no key
 ```
 
 Design decisions:
@@ -312,7 +350,7 @@ Design decisions:
 
 ```bash
 ruff check .
-pytest                                    # 27 tests, no network, no API key
+pytest                                    # 42 tests, no network, no API key
 bandit -q -c pyproject.toml -r secops_copilot
 pip-audit
 ```
@@ -323,8 +361,8 @@ unknown targets, normalises severity and always reports an injection; the offlin
 down to the evidence line numbers; the Claude backend's request shape (model, effort, schema, cached system
 prompt, fallback beta), its redaction of the outgoing message, its handling of refusal, truncation and invalid
 JSON, and its resistance to a complying model; the approval gate, including that execution without approval
-raises and that a rejected or executed action cannot run; the report's structure and redaction; and the dashboard
-and CLI end to end.
+raises and that a rejected or executed action cannot run; the report's structure and redaction; the dashboard
+and CLI end to end; and each attack listed under [Attacks we tested](#attacks-we-tested).
 
 CI runs the suite on Python 3.11, 3.12 and 3.13, builds and smoke-tests the Docker image, and runs
 [SecureFlow](https://github.com/Leonard-Opasanjo/secureflow-devsecops) (Bandit, Semgrep, Gitleaks, pip-audit) with
@@ -342,8 +380,11 @@ results in the Security tab.
   be absent.
 - Redaction is pattern-based too. An unusual credential format passes through. Treat the offline backend as the
   only mode that guarantees nothing leaves the machine.
-- The dashboard has no authentication and binds to localhost. The approver's name is typed, not verified; for a
-  team deployment put it behind a reverse proxy with login and take the name from the proxy.
+- The check that a fact's lines show what it names is a heuristic over accounts, addresses and host names. It
+  catches a fact pinned on unrelated lines, not a wrong reading of the right ones.
+- The dashboard has no authentication and binds to localhost; it refuses other host names and cross-site posts.
+  The approver's name is typed, not verified; for a team deployment put it behind a reverse proxy with login and
+  take the name from the proxy.
 - One analysis per case; there is no conversation with the analyst and no feedback loop into the model.
 
 ## Roadmap

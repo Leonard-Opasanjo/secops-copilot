@@ -82,3 +82,42 @@ def test_cli_claude_without_credentials(tmp_path, monkeypatch, capsys):
 def test_module_entry_point():
     r = subprocess.run([sys.executable, "-m", "secops_copilot.cli", "--version"], capture_output=True, text=True)
     assert r.returncode == 0 and "secops-copilot 0." in r.stdout
+
+
+def test_cross_site_requests_and_foreign_hosts_are_refused(client):
+    client.post("/cases", data={"title": "bf", "alerts": ALERTS, "logs": LOGS, "analyst": "offline"})
+    aid = client.get("/api/cases/1").json()["actions"][0]["id"]
+    vote = {"decision": "approved", "by": "x"}
+    for hostile in ({"origin": "https://evil.example"}, {"sec-fetch-site": "cross-site"}, {"origin": "null"}):
+        assert client.post(f"/actions/{aid}/decide", data=vote, headers=hostile).status_code == 403
+    assert client.get("/api/cases/1").json()["actions"][0]["status"] == "proposed"
+    assert client.get("/api/cases/1", headers={"host": "attacker.example"}).status_code == 400  # DNS rebinding
+    same = {"origin": "http://127.0.0.1:8000", "sec-fetch-site": "same-origin"}
+    assert client.post(f"/actions/{aid}/decide", data=vote, headers=same, follow_redirects=False).status_code == 303
+    assert client.post(f"/actions/{aid}/execute", data={"by": " "}).status_code == 400  # the executor must be named
+
+
+def test_claude_api_failure_fails_the_case(client, monkeypatch, fake_client, capsys):
+    import anthropic
+
+    from secops_copilot import cli, web
+    from secops_copilot.analyst_claude import ClaudeAnalyst
+
+    def api_down():
+        return ClaudeAnalyst(client=fake_client({}, error=anthropic.APIConnectionError(request=None)))
+
+    for module in (web, cli):
+        monkeypatch.setattr(module, "ClaudeAnalyst", api_down)
+        monkeypatch.setattr(module, "claude_available", lambda: True)
+    client.post("/cases", data={"title": "c", "logs": LOGS, "analyst": "claude"})
+    row = client.get("/api/cases/1").json()
+    assert row["status"] == "failed" and "could not reach the Claude API" in row["error"]
+    logs = str(SAMPLES / "brute-force-success/logs.txt")
+    assert main(["analyse", "--logs", logs, "--analyst", "claude", "--no-save"]) == 2
+    assert "could not reach the Claude API" in capsys.readouterr().err
+
+
+def test_no_third_party_scripts_api_schema_served(client):
+    assert client.get("/api/docs").status_code == 404
+    assert client.get("/api/openapi.json").json()["info"]["title"] == "SecOps Copilot"
+    assert "cdn.jsdelivr.net" not in client.get("/").headers["content-security-policy"]

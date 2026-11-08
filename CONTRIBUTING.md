@@ -46,8 +46,9 @@ prompt; add a test for any new field in the schema; and remember that `validate_
 ## Writing a connector
 
 Implement a class with `execute(self, kind: str, target: str) -> str` and pass it to `Store(path,
-connector=...)`. The store calls it only for actions in the `approved` state. Log what you changed and how to
-undo it; the string you return goes into the audit trail. Do not add a code path that bypasses the approval gate.
+connector=...)`. The store calls it only for actions in the `approved` state, once per approval: it marks the
+action `executing` first, and if your `execute` raises, puts it back to `approved` and audits the failure. Log what
+you changed and how to undo it; the string you return goes into the audit trail. Do not add a code path that bypasses the approval gate.
 
 ## Security issues
 

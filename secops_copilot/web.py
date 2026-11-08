@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, PackageLoader, select_autoescape
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import REPO_URL, __version__
 from .actions import ACTIONS, ApprovalRequired
-from .analyst_claude import AnalystError, ClaudeAnalyst, claude_available
+from .analyst_claude import ClaudeAnalyst, claude_available
 from .analyst_offline import analyse_offline
 from .case import Case, CaseError
 from .db import Store
@@ -22,7 +24,12 @@ from .report import incident_report
 env = Environment(loader=PackageLoader("secops_copilot", "templates"), autoescape=select_autoescape(["html"]))
 env.globals.update(version=__version__, repo_url=REPO_URL, severities=SEVERITIES, action_names=ACTIONS)
 templates = Jinja2Templates(env=env)
-app = FastAPI(title="SecOps Copilot", docs_url="/api/docs", redoc_url=None, openapi_url="/api/openapi.json")
+# Swagger UI is off: it would need scripts from a CDN on a page that can read every case.
+app = FastAPI(title="SecOps Copilot", docs_url=None, redoc_url=None, openapi_url="/api/openapi.json")
+# names this dashboard answers to; any other Host header (a DNS-rebinding page, for one) gets 400
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get("SECOPS_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
+                 if h.strip()]
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 SECURITY_HEADERS = {
     "content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
                                "form-action 'self'; frame-ancestors 'none'; base-uri 'self'",
@@ -42,9 +49,20 @@ def analysts() -> dict[str, bool]:
     return {"offline": True, "claude": claude_available()}
 
 
+def _cross_site(request: Request) -> bool:
+    """A form or script on another site posting here (CSRF). Clients that are not browsers send neither header."""
+    if request.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none"):
+        return True
+    origin = request.headers.get("origin")
+    return origin is not None and urlsplit(origin).netloc != request.headers.get("host")
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
-    response = await call_next(request)
+    if request.method not in ("GET", "HEAD", "OPTIONS") and _cross_site(request):
+        response = PlainTextResponse("cross-site request refused", status_code=403)
+    else:
+        response = await call_next(request)
     for k, v in SECURITY_HEADERS.items():
         response.headers.setdefault(k, v)
     return response
@@ -58,7 +76,7 @@ def run_analysis(case_id: int, analyst_name: str) -> None:
         case = Case.load(row["title"], row["logs"], row["alerts_json"], row["source"])
         analysis = analyse_offline(case) if analyst_name != "claude" else ClaudeAnalyst().analyse(case)
         db.finish(case_id, analysis)
-    except (CaseError, AnalystError, ValueError, RuntimeError, OSError) as e:
+    except Exception as e:  # a background job must always record its outcome, or the case shows "running" forever
         db.fail(case_id, f"{type(e).__name__}: {e}")
 
 
@@ -122,6 +140,8 @@ def execute(action_id: int, by: str = Form("")):
         raise HTTPException(404, "action not found") from e
     except ApprovalRequired as e:
         raise HTTPException(403, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
     return RedirectResponse(f"/cases/{action['case_id']}#actions", status_code=303)
 
 

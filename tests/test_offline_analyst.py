@@ -51,3 +51,14 @@ def test_quiet_logs_stay_informational():
     a = analyse_offline(Case.load("q", "Oct 17 08:02:17 h sshd[1]: Accepted publickey for alice from 10.0.1.20 port 1 ssh2\n"
                                         "Oct 17 08:05:40 h sudo:    alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/apt update"))
     assert a.severity == "informational" and a.proposed_actions == [] and "routine administration" in a.facts[0].statement
+
+
+def test_private_address_ranges():
+    from secops_copilot.analyst_offline import _is_private
+
+    assert all(_is_private(ip) for ip in ("10.1.2.3", "172.31.0.1", "192.168.1.1", "127.0.0.1", "100.64.1.1",
+                                          "169.254.1.1", "fd00::1", "::1", "localhost"))
+    assert not any(_is_private(ip) for ip in ("172.217.14.206", "172.2.3.4", "172.250.1.1", "203.0.113.9", "8.8.8.8"))
+    logs = "\n".join(f"Oct 17 02:1{i}:04 h sshd[1]: Failed password for dave from 172.217.14.206 port 1 ssh2"
+                     for i in range(5))
+    assert ("block_ip", "172.217.14.206") in {(x.type, x.target) for x in analyse_offline(Case.load("t", logs)).proposed_actions}

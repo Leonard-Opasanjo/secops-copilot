@@ -134,23 +134,38 @@ class Store:
             raise KeyError(action_id)
         if action["status"] != "proposed":
             raise ValueError(f"action is already {action['status']}")
-        with self._conn() as c:
-            c.execute("UPDATE actions SET status = ?, decided_by = ?, decided_at = ?, note = ? WHERE id = ?",
-                      (decision, by[:100], _now(), note.strip()[:1000], action_id))
+        with self._conn() as c:  # still proposed at write time, so a concurrent decision cannot be overwritten
+            decided = c.execute("UPDATE actions SET status = ?, decided_by = ?, decided_at = ?, note = ? "
+                                "WHERE id = ? AND status = 'proposed'",
+                                (decision, by[:100], _now(), note.strip()[:1000], action_id)).rowcount
+        if not decided:
+            raise ValueError(f"action is already {self.get_action(action_id)['status']}")
         self.audit(action["case_id"], by, f"action_{decision}", f"{action['type']} {action['target']}: {note[:200]}")
         return self.get_action(action_id)
 
     def execute(self, action_id: int, by: str) -> dict:
-        """Run an action through the connector. Refuses anything a human has not approved."""
+        """Run an action through the connector, once. Refuses anything a human has not approved."""
+        by = (by or "").strip()
+        if not by:
+            raise ValueError("the name of the person executing the action is required")
+        with self._conn() as c:  # claim it in one statement, so two requests cannot both run it
+            claimed = c.execute("UPDATE actions SET status = 'executing' WHERE id = ? AND status = 'approved'",
+                                (action_id,)).rowcount
         action = self.get_action(action_id)
         if action is None:
             raise KeyError(action_id)
-        if action["status"] != "approved":
+        if not claimed:
             raise ApprovalRequired(f"action {action_id} is {action['status']}; only approved actions can run")
-        result = self.connector.execute(action["type"], action["target"])
+        try:
+            result = self.connector.execute(action["type"], action["target"])
+        except Exception as e:  # put it back for a retry, and record the failure
+            with self._conn() as c:
+                c.execute("UPDATE actions SET status = 'approved' WHERE id = ?", (action_id,))
+            self.audit(action["case_id"], by[:100], "action_failed", f"{action['type']} {action['target']}: {e}")
+            raise
         with self._conn() as c:
             c.execute("UPDATE actions SET status = 'executed', result = ? WHERE id = ?", (result[:1000], action_id))
-        self.audit(action["case_id"], (by or "unknown")[:100], "action_executed",
+        self.audit(action["case_id"], by[:100], "action_executed",
                    f"{action['type']} {action['target']}: {result[:200]}")
         return self.get_action(action_id)
 

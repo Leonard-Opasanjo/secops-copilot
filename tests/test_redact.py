@@ -27,7 +27,26 @@ def test_log_lines_are_left_alone():
     lines = ["Oct 17 02:11:04 bastion-01 sshd[2217]: Failed password for dave from 203.0.113.9 port 51022 ssh2",
              "sudo:     dave : TTY=pts/2 ; PWD=/home/dave ; USER=root ; COMMAND=/usr/bin/tar czf /tmp/export.tgz /home",
              "order 1234567890123 shipped",  # fails Luhn: not a card
-             "useradd[2290]: new user: name=support2, UID=1010"]
+             "useradd[2290]: new user: name=support2, UID=1010",
+             "ssh -p2222 bastion-01", "mysql -u root -p appdb", "a basic configuration was loaded",
+             "token_type=Bearer expires_in=3600"]
     for ln in lines:
         out, counts = redact(ln)
         assert out == ln and counts == {}, ln
+
+
+def test_common_secret_shapes():
+    cases = [('{"password": "hunter22"}', "hunter22"),  # gitleaks:allow (fake values for the redaction tests)
+             ("DB_PASSWORD=S3cretPass!", "S3cretPass"),  # gitleaks:allow
+             ("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "wJalrXUtnFEMI"),  # gitleaks:allow
+             ("GET /cb?access_token=abcdef123456 HTTP/1.1", "abcdef123456"),  # gitleaks:allow
+             ("Authorization: Basic dXNlcjpzM2NyZXRwYXNz", "dXNlcjpzM2NyZXRwYXNz"),  # gitleaks:allow
+             ("key sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789", "AbCdEfGhIjKl"),  # gitleaks:allow
+             ("COMMAND=/usr/bin/mysql -uroot -pS3cretPass", "S3cretPass"),  # gitleaks:allow
+             ("sshpass -p S3cretPass ssh host", "S3cretPass"),  # gitleaks:allow
+             ("github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz", "abcdefghijklmnop"),  # gitleaks:allow
+             ("Cookie: sessionid=9f8e7d6c5b4a39281706", "9f8e7d6c5b4a39281706"),  # gitleaks:allow
+             ("google AIzaSyA1234567890abcdefghijklmnopqrstuv", "AIzaSyA12345")]  # gitleaks:allow
+    for text, secret in cases:
+        out, counts = redact(text)
+        assert secret not in out and counts, text

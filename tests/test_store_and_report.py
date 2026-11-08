@@ -75,3 +75,62 @@ def test_report_keeps_facts_and_hypotheses_apart_and_redacts(tmp_path):
     a = analyse_offline(secret_case)
     md = incident_report(secret_case, {**a.to_dict(), "facts": [{"statement": "s", "evidence": ["L1"]}]})
     assert "eyJhbGci" not in md and "[REDACTED" in md
+
+
+def test_decide_and_execute_cannot_race(tmp_path):
+    store, cid, _ = make(tmp_path)
+    first, second, third = [a["id"] for a in store.get_case(cid)["actions"][:3]]
+    real_get = store.get_action
+
+    def read_then_rejected_elsewhere(action_id):  # another analyst rejects between our read and our write
+        action = real_get(action_id)
+        with store._conn() as c:
+            c.execute("UPDATE actions SET status = 'rejected' WHERE id = ?", (action_id,))
+        return action
+
+    store.get_action = read_then_rejected_elsewhere
+    with pytest.raises(ValueError, match="already"):
+        store.decide(first, "approved", "eve")
+    store.get_action = real_get
+    assert store.get_action(first)["status"] == "rejected"
+
+    calls = []
+
+    class SecondRequestMeanwhile:  # a second execute arrives while the connector is still working
+        def execute(self, kind, target):
+            calls.append(target)
+            with pytest.raises(ApprovalRequired, match="executing"):
+                store.execute(second, "bob")
+            return "done"
+
+    store.connector = SecondRequestMeanwhile()
+    store.decide(second, "approved", "alice")
+    assert store.execute(second, "alice")["status"] == "executed" and len(calls) == 1
+
+    class Broken:
+        def execute(self, kind, target):
+            raise RuntimeError("firewall API down")
+
+    store.connector = Broken()
+    store.decide(third, "approved", "alice")
+    with pytest.raises(RuntimeError):
+        store.execute(third, "alice")
+    assert store.get_action(third)["status"] == "approved"  # can be retried
+    assert store.get_case(cid)["audit"][-1]["event"] == "action_failed"
+    with pytest.raises(ValueError, match="name"):
+        store.execute(third, " ")
+
+
+def test_report_text_from_the_data_is_redacted_and_inert():
+    logs = ("Oct 17 02:11:04 h sshd[1]: Failed password for dave from 203.0.113.9 port 1 ssh2\n" * 4
+            + "Oct 17 02:17:21 h sshd[2]: Accepted password for dave from 203.0.113.9 port 2 ssh2\n"
+            "Oct 17 02:19:03 h sudo:     dave : TTY=pts/2 ; PWD=/home/dave ; USER=root ; COMMAND=/usr/bin/curl -H "
+            "Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123 <img src=x onerror=alert(1)>\n"  # gitleaks:allow
+            "Oct 17 02:20:00 h app[3]: weird ` <script>alert(2)</script>\n")
+    case = Case.load("t", logs)
+    analysis = analyse_offline(case).to_dict()
+    analysis["facts"].append({"statement": "x\n## Forged section", "evidence": ["L7"]})
+    md = incident_report(case, analysis)
+    assert "abcdefghijklmnopqrstuvwxyz0123" not in md and "\n## Forged" not in md
+    assert all("<" not in ln or ln.lstrip().startswith(">") for ln in md.splitlines())  # raw HTML only in quoted code
+    assert "> `` L7: Oct 17 02:20:00 h app[3]: weird ` <script>alert(2)</script> ``" in md

@@ -10,7 +10,7 @@ ACTIONS: dict[str, str] = {
     "add_to_watchlist": "Add the indicator to the monitoring watch-list",
     "preserve_evidence": "Snapshot and preserve logs and disk state of the host",
 }
-STATUSES = ("proposed", "approved", "rejected", "executed")
+STATUSES = ("proposed", "approved", "rejected", "executing", "executed")
 
 
 class ApprovalRequired(PermissionError):
@@ -21,7 +21,7 @@ class DryRunConnector:
     """The only connector shipped. It records what would happen and changes nothing.
 
     A real deployment replaces this with a class exposing the same `execute` method that talks to the firewall,
-    directory or EDR. The approval gate in the store calls it only for actions in the `approved` state.
+    directory or EDR. The approval gate in the store calls it only for actions in the `approved` state, once each.
     """
 
     def execute(self, kind: str, target: str) -> str:

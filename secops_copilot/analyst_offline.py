@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from collections import defaultdict
 
@@ -15,12 +16,20 @@ SUDO = re.compile(r"sudo:\s+(\S+) : .*COMMAND=(.*)$")
 NEW_USER = re.compile(r"useradd\[\d+\]: new user: name=([^,\s]+)")
 GROUP_CHANGE = re.compile(r"usermod\[\d+\]: add '([^']+)' to (?:shadow )?group '([^']+)'")
 CRON = re.compile(r"crontab\[\d+\]: \((\S+)\) (?:REPLACE|BEGIN EDIT)")
-PRIVATE_PREFIX = ("10.", "192.168.", "127.", "172.16.", "172.17.", "172.18.", "172.19.", "172.2", "172.30.", "172.31.")
+# internal ranges, listed rather than ipaddress.is_private, which also counts the documentation ranges
+# (203.0.113.0/24 and others, used by the samples) as private
+PRIVATE_NETS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8",
+                                                        "100.64.0.0/10", "169.254.0.0/16", "::1/128", "fc00::/7",
+                                                        "fe80::/10"))
 ORDER = ("informational", "low", "medium", "high", "critical")
 
 
 def _is_private(ip: str) -> bool:
-    return ip.startswith(PRIVATE_PREFIX) or ip in ("::1", "localhost")
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip == "localhost"
+    return any(address.version == net.version and address in net for net in PRIVATE_NETS)
 
 
 def analyse_offline(case: Case) -> Analysis:
@@ -47,7 +56,7 @@ def analyse_offline(case: Case) -> Analysis:
     facts, hypotheses, steps, actions, reasons = [], [], [], [], []
     severity = "informational"
     suspect_users: set[str] = set()
-    suspect_hosts: set[str] = set()
+    suspect_hosts: dict[str, list[str]] = defaultdict(list)  # host -> the lines that tie it to the attack
 
     def raise_to(level: str) -> None:
         nonlocal severity
@@ -99,7 +108,7 @@ def analyse_offline(case: Case) -> Analysis:
             raise_to("critical")
             suspect_users.add(user)
             if host:
-                suspect_hosts.add(host)
+                suspect_hosts[host].append(f"L{n}")
             add_action("disable_account", user, "Likely compromised through password guessing; stop further use "
                                                 "until the owner confirms.", refs)
             add_action("reset_credentials", user, "The password was guessed or leaked.", refs)
@@ -126,7 +135,7 @@ def analyse_offline(case: Case) -> Analysis:
         raise_to("critical")
         host = host_of(case.lines[n - 1])
         if host:
-            suspect_hosts.add(host)
+            suspect_hosts[host].append(f"L{n}")
     if other:
         who = ", ".join(sorted({u for _, u, _ in other}))
         facts.append({"statement": f"{len(other)} privileged command(s) by other users ({who}), consistent with "
@@ -152,10 +161,10 @@ def analyse_offline(case: Case) -> Analysis:
 
     for host in sorted(suspect_hosts):
         add_action("preserve_evidence", host, "Keep logs and disk state of the affected host before any clean-up.",
-                   [])
+                   suspect_hosts[host])
         if severity == "critical":
             add_action("isolate_host", host, "Contain the host while the extent of the compromise is established.",
-                       [])
+                       suspect_hosts[host])
 
     steps += [
         {"description": "Confirm the timeline against the raw logs and the alert source, and note any gaps.",

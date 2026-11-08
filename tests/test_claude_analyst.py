@@ -90,3 +90,33 @@ def test_user_message_alert_redaction():
     case = Case.load("t", "", json.dumps([{"rule": "r", "detail": "password=topsecret1"}]))
     body, counts = build_user_message(case)
     assert "topsecret1" not in body and counts == {"secret_assignment": 1}
+
+
+def test_alert_values_and_title_are_redacted():
+    alerts = json.dumps([{"rule": "r", "password": "hunter22", "api_key": "abcd1234efgh",  # gitleaks:allow (fake)
+                          "detail": 'login password="hunter33" failed', "nested": {"db_password": "S3cretPass"}}])
+    body, counts = build_user_message(Case.load("incident token=zz9secretvalue", "", alerts))
+    for secret in ("hunter22", "abcd1234efgh", "hunter33", "S3cretPass", "zz9secretvalue"):
+        assert secret not in body, secret
+    assert counts == {"secret_assignment": 5}
+
+
+def test_private_key_split_over_log_lines_is_redacted():
+    logs = ("app[1]: dumping key\n-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAfakekeybody\nAAAAB3NzaC1yc2EAAAAD\n"  # gitleaks:allow
+            "-----END RSA PRIVATE KEY-----\napp[1]: after the key")
+    body, counts = build_user_message(Case.load("t", logs))
+    assert "MIIEpAIBAAKCAQEA" not in body and "AAAAB3NzaC1yc2E" not in body and counts == {"private_key": 1}
+    assert "L6: app[1]: after the key" in body  # the line numbers the evidence refers to are unchanged
+
+
+def test_fallback_block_and_unfinished_replies(fake_client):
+    from types import SimpleNamespace
+
+    # a streamed reply keeps the declined model's partial text before the fallback block; the answer follows it
+    content = [SimpleNamespace(type="text", text='{"summary": "cut off'), SimpleNamespace(type="fallback"),
+               SimpleNamespace(type="text", text=json.dumps(GOOD_REPLY))]
+    a = ClaudeAnalyst(client=fake_client(GOOD_REPLY, content=content)).analyse(Case.load("t", LOGS))
+    assert a.summary == "dave compromised"
+    for stop in ("model_context_window_exceeded", "pause_turn"):
+        with pytest.raises(AnalystError, match=stop):
+            ClaudeAnalyst(client=fake_client(GOOD_REPLY, stop_reason=stop)).analyse(Case.load("t", LOGS))
